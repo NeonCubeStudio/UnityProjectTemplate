@@ -1,0 +1,8 @@
+{
+    "name": "MemoryProfiler",
+    "references": [],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": []
+}

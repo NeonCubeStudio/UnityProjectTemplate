@@ -1,0 +1,403 @@
+#if UNITY_EDITOR
+using System;
+using UnityEditor;
+using UnityEngine;
+using UnityEditor.MemoryProfiler;
+using System.Linq;
+using System.Collections.Generic;
+
+namespace MemoryProfilerWindow
+{
+    internal class Inspector
+    {
+        private Stack<ThingInMemory> _backSelected = new Stack<ThingInMemory>();
+        private Stack<ThingInMemory> _nextSelected = new Stack<ThingInMemory>();
+        private ThingInMemory _selectedThing;
+        private ThingInMemory[] _shortestPath;
+        internal ShortestPathToRootFinder _shortestPathToRootFinder;
+        internal readonly int width = 400;
+        private Vector2 _scrollPosition;
+        private MemoryProfilerWindow _hostWindow;
+        private CrawledMemorySnapshot _unpackedCrawl;
+        private PrimitiveValueReader _primitiveValueReader;
+        private Dictionary<ulong, ThingInMemory> objectCache = new Dictionary<ulong, ThingInMemory>();
+        private Texture2D _textureObject;
+        private int _prevInstance;
+        private float _textureSize = 128.0f;
+
+
+        private static class Styles
+        {
+            public static GUIStyle entryEven = "OL EntryBackEven";
+            public static GUIStyle entryOdd = "OL EntryBackOdd";
+        }
+
+        private GUILayoutOption labelWidth = GUILayout.Width(150);
+
+        internal Inspector(MemoryProfilerWindow hostWindow, CrawledMemorySnapshot unpackedCrawl, PackedMemorySnapshot snapshot)
+        {
+            _unpackedCrawl = unpackedCrawl;
+            _hostWindow = hostWindow;
+            _shortestPathToRootFinder = new ShortestPathToRootFinder(unpackedCrawl);
+            _primitiveValueReader = new PrimitiveValueReader(_unpackedCrawl.virtualMachineInformation, _unpackedCrawl.managedHeap);
+        }
+
+        internal void SelectThing(ThingInMemory thing)
+        {
+            _selectedThing = thing;
+
+            if (_backSelected.Count == 0 || _selectedThing != _backSelected.Peek())
+                _backSelected.Push(_selectedThing);
+
+            _shortestPath = _shortestPathToRootFinder.FindFor(thing);
+        }
+
+        internal void Draw()
+        {
+            GUILayout.BeginArea(new Rect(_hostWindow.position.width - width, _hostWindow.topMargin, width, _hostWindow.position.height - _hostWindow.topMargin));
+            _scrollPosition = GUILayout.BeginScrollView(_scrollPosition);
+
+            GUILayout.BeginHorizontal();
+            GUI.enabled = _backSelected.Count > 1;
+			if (GUILayout.Button(string.Format("Back ({0})", Math.Max(0,_backSelected.Count-1))))
+			{
+                _backSelected.Pop();
+
+                if (_nextSelected.Count == 0 || _backSelected.Peek() != _nextSelected.Peek())
+                    _nextSelected.Push(_backSelected.Peek());
+
+                _hostWindow.SelectThing(_backSelected.Peek());
+            }
+			GUI.enabled = true;
+
+            GUI.enabled = _nextSelected.Count > 1;
+            if (GUILayout.Button(string.Format("Next ({0})", Math.Max(0,_nextSelected.Count - 1))))
+            {
+                _nextSelected.Pop();
+                _hostWindow.SelectThing(_nextSelected.Peek());
+            }
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+
+            if (_unpackedCrawl != null)
+            {
+                GUILayout.Label(string.Format("Total memory: {0}", EditorUtility.FormatBytes(_unpackedCrawl.totalSize)));
+            }
+
+            if (_selectedThing == null)
+                GUILayout.Label("Select an object to see more info");
+            else
+            {
+                NativeUnityEngineObject nativeObject = _selectedThing as NativeUnityEngineObject;
+                if (nativeObject != null)
+                {
+                    GUILayout.Label("NativeUnityEngineObject", EditorStyles.boldLabel);
+                    GUILayout.Space(5);
+                    EditorGUILayout.LabelField("Name", nativeObject.name);
+                    EditorGUILayout.LabelField("ClassName", nativeObject.className);
+                    EditorGUILayout.LabelField("Memory amount", EditorUtility.FormatBytes(_selectedThing.size));
+                    EditorGUILayout.LabelField("instanceID", nativeObject.instanceID.ToString());
+                    EditorGUILayout.LabelField("isDontDestroyOnLoad", nativeObject.isDontDestroyOnLoad.ToString());
+                    EditorGUILayout.LabelField("isPersistent", nativeObject.isPersistent.ToString());
+                    EditorGUILayout.LabelField("isManager", nativeObject.isManager.ToString());
+                    EditorGUILayout.LabelField("hideFlags", nativeObject.hideFlags.ToString());                    
+                    DrawSpecificTexture2D(nativeObject);
+                }
+
+                ManagedObject managedObject = _selectedThing as ManagedObject;
+                if (managedObject != null)
+                {
+                    GUILayout.Label("ManagedObject");
+                    EditorGUILayout.LabelField("Type", managedObject.typeDescription.name);
+                    EditorGUILayout.LabelField("Address", managedObject.address.ToString("X"));
+                    EditorGUILayout.LabelField("size", managedObject.size.ToString());
+
+                    if (managedObject.typeDescription.name == "System.String")
+                        EditorGUILayout.LabelField("value", StringTools.ReadString(_unpackedCrawl.managedHeap.Find(managedObject.address, _unpackedCrawl.virtualMachineInformation), _unpackedCrawl.virtualMachineInformation));
+                    DrawFields(managedObject);
+
+                    if (managedObject.typeDescription.isArray)
+                    {
+                        DrawArray(managedObject);
+                    }
+                }
+
+                if (_selectedThing is GCHandle)
+                {
+                    GUILayout.Label("GCHandle");
+                    EditorGUILayout.LabelField("size", _selectedThing.size.ToString());
+                }
+
+                StaticFields staticFields = _selectedThing as StaticFields;
+                if (staticFields != null)
+                {
+                    GUILayout.Label("Static Fields");
+                    GUILayout.Label("Of type: " + staticFields.typeDescription.name);
+                    GUILayout.Label("size: " + staticFields.size);
+
+                    DrawFields(staticFields.typeDescription, new BytesAndOffset() { bytes = staticFields.typeDescription.staticFieldBytes, offset = 0, pointerSize = _unpackedCrawl.virtualMachineInformation.pointerSize}, true);
+                }
+
+                if (managedObject == null)
+                {
+                    GUILayout.Space(10);
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("References:", labelWidth);
+                    GUILayout.BeginVertical();
+                    DrawLinks(_selectedThing.references);
+                    GUILayout.EndVertical();
+                    GUILayout.EndHorizontal();
+                }
+
+                GUILayout.Space(10);
+                GUILayout.Label("Referenced by:");
+                DrawLinks(_selectedThing.referencedBy);
+
+                GUILayout.Space(10);
+                if (_shortestPath != null)
+                {
+                    if (_shortestPath.Length > 1)
+                    {
+                        GUILayout.Label("ShortestPathToRoot");
+                        DrawLinks(_shortestPath);
+                    }
+                    string reason;
+                    _shortestPathToRootFinder.IsRoot(_shortestPath.Last(), out reason);
+                    GUILayout.Label("This is a root because:");
+                    GUILayout.TextArea(reason);
+                }
+                else
+                {
+                    GUILayout.TextArea("No root is keeping this object alive. It will be collected next UnloadUnusedAssets() or scene load");
+                }
+            }
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
+        }
+
+        private Texture2D GetTexture(NativeUnityEngineObject nativeObject)
+        {
+            // If the texture has a name, try to match it to a loaded object
+            if (!string.IsNullOrEmpty(nativeObject.name))
+            {
+                Texture2D[] loadedTextures = Resources.FindObjectsOfTypeAll<Texture2D>();
+
+                for (int i = 0; i < loadedTextures.Length; i++)
+                {
+                    if (!loadedTextures[i].name.Equals(nativeObject.name)) continue;
+                    if (loadedTextures[i].GetInstanceID() != nativeObject.instanceID) continue;
+                    return loadedTextures[i];
+                }
+            }
+            // None matched
+            return null;
+        }
+
+        private void DrawSpecificTexture2D(NativeUnityEngineObject nativeObject)
+        {
+            if (nativeObject.className != "Texture2D")
+            {
+                _textureObject = null;
+                return;
+            }
+            EditorGUILayout.HelpBox("Previewing Texture2D only works correctly when profiling inside the editor.", MessageType.Warning, true);
+            if (_prevInstance != nativeObject.instanceID)
+            {
+                // Attempt to match the texture to one in editor
+                _textureObject = GetTexture(nativeObject);
+                _prevInstance = nativeObject.instanceID;
+            }
+            if (_textureObject != null)
+            {
+                EditorGUILayout.LabelField("textureInfo: " + _textureObject.width + "x" + _textureObject.height + " " + _textureObject.format);
+                EditorGUILayout.ObjectField(_textureObject, typeof(Texture2D), false);
+                _textureSize = EditorGUILayout.Slider(_textureSize, 100.0f, 1024.0f);
+                GUILayout.Label(_textureObject, GUILayout.Width(_textureSize), GUILayout.Height(_textureSize * _textureObject.height / _textureObject.width));
+            }
+            else
+            {
+                EditorGUILayout.LabelField("Can't instance the texture, maybe it was already released.");
+            }
+        }
+
+        private void DrawArray(ManagedObject managedObject)
+        {
+            TypeDescription typeDescription = managedObject.typeDescription;
+            int elementCount = ArrayTools.ReadArrayLength(_unpackedCrawl.managedHeap, managedObject.address, typeDescription, _unpackedCrawl.virtualMachineInformation);
+            GUILayout.Label("element count: " + elementCount);
+            int rank = typeDescription.arrayRank;
+            GUILayout.Label("arrayRank: " + rank);
+            if (_unpackedCrawl.typeDescriptions[typeDescription.baseOrElementTypeIndex].isValueType)
+            {
+                GUILayout.Label("Cannot yet display elements of value type arrays");
+                return;
+            }
+            if (rank != 1)
+            {
+                GUILayout.Label("Cannot display non rank=1 arrays yet.");
+                return;
+            }
+
+            List<UInt64> pointers = new List<UInt64>();
+            for (int i = 0; i != elementCount; i++)
+            {
+                pointers.Add(_primitiveValueReader.ReadPointer(managedObject.address + (UInt64)_unpackedCrawl.virtualMachineInformation.arrayHeaderSize + (UInt64)(i * _unpackedCrawl.virtualMachineInformation.pointerSize)));
+            }
+            GUILayout.Label("elements:");
+            DrawLinks(pointers);
+        }
+
+        private void DrawFields(TypeDescription typeDescription, BytesAndOffset bytesAndOffset, bool useStatics = false)
+        {
+            int counter = 0;
+        
+            foreach (FieldDescription field in TypeTools.AllFieldsOf(typeDescription, _unpackedCrawl.typeDescriptions, useStatics ? TypeTools.FieldFindOptions.OnlyStatic : TypeTools.FieldFindOptions.OnlyInstance))
+            {
+                counter++;
+                GUIStyle gUIStyle = counter % 2 == 0 ? Styles.entryEven : Styles.entryOdd;
+                gUIStyle.margin = new RectOffset(0, 0, 0, 0);
+                gUIStyle.overflow = new RectOffset(0, 0, 0, 0);
+                gUIStyle.padding = EditorStyles.label.padding;
+                GUILayout.BeginHorizontal(gUIStyle);
+                GUILayout.Label(field.name, labelWidth);
+                GUILayout.BeginVertical();
+                DrawValueFor(field, bytesAndOffset.Add(field.offset));
+                GUILayout.EndVertical();
+                GUILayout.EndHorizontal();
+            }
+        }
+
+        private void DrawFields(ManagedObject managedObject)
+        {
+            if (managedObject.typeDescription.isArray)
+                return;
+            GUILayout.Space(10);
+            GUILayout.Label("Fields:");
+            DrawFields(managedObject.typeDescription, _unpackedCrawl.managedHeap.Find(managedObject.address, _unpackedCrawl.virtualMachineInformation));
+        }
+
+        private void DrawValueFor(FieldDescription field, BytesAndOffset bytesAndOffset)
+        {
+            TypeDescription typeDescription = _unpackedCrawl.typeDescriptions[field.typeIndex];
+
+            switch (typeDescription.name)
+            {
+                case "System.Int32":
+                    GUILayout.Label(_primitiveValueReader.ReadInt32(bytesAndOffset).ToString());
+                    break;
+                case "System.Int64":
+                    GUILayout.Label(_primitiveValueReader.ReadInt64(bytesAndOffset).ToString());
+                    break;
+                case "System.UInt32":
+                    GUILayout.Label(_primitiveValueReader.ReadUInt32(bytesAndOffset).ToString());
+                    break;
+                case "System.UInt64":
+                    GUILayout.Label(_primitiveValueReader.ReadUInt64(bytesAndOffset).ToString());
+                    break;
+                case "System.Int16":
+                    GUILayout.Label(_primitiveValueReader.ReadInt16(bytesAndOffset).ToString());
+                    break;
+                case "System.UInt16":
+                    GUILayout.Label(_primitiveValueReader.ReadUInt16(bytesAndOffset).ToString());
+                    break;
+                case "System.Byte":
+                    GUILayout.Label(_primitiveValueReader.ReadByte(bytesAndOffset).ToString());
+                    break;
+                case "System.SByte":
+                    GUILayout.Label(_primitiveValueReader.ReadSByte(bytesAndOffset).ToString());
+                    break;
+                case "System.Char":
+                    GUILayout.Label(_primitiveValueReader.ReadChar(bytesAndOffset).ToString());
+                    break;
+                case "System.Boolean":
+                    GUILayout.Label(_primitiveValueReader.ReadBool(bytesAndOffset).ToString());
+                    break;
+                case "System.Single":
+                    GUILayout.Label(_primitiveValueReader.ReadSingle(bytesAndOffset).ToString());
+                    break;
+                case "System.Double":
+                    GUILayout.Label(_primitiveValueReader.ReadDouble(bytesAndOffset).ToString());
+                    break;
+                case "System.IntPtr":
+                    GUILayout.Label(_primitiveValueReader.ReadPointer(bytesAndOffset).ToString("X"));
+                    break;
+                default:
+
+                    if (!typeDescription.isValueType)
+                    {
+                        ThingInMemory item = GetThingAt(bytesAndOffset.ReadPointer());
+                        if (item == null)
+                        {
+                            EditorGUI.BeginDisabledGroup(true);
+                            GUILayout.Button("Null");
+                            EditorGUI.EndDisabledGroup();
+                        }
+                        else
+                        {
+                            DrawLinks(new ThingInMemory[] { item });
+                        }
+                    }
+                    else
+                    {
+                        DrawFields(typeDescription, bytesAndOffset);
+                    }
+                    break;
+            }
+        }
+
+        private ThingInMemory GetThingAt(ulong address)
+        {
+            if (!objectCache.ContainsKey(address))
+            {
+                objectCache[address] = _unpackedCrawl.allObjects.OfType<ManagedObject>().FirstOrDefault(mo => mo.address == address);
+            }
+
+            return objectCache[address];
+        }
+
+        private void DrawLinks(IEnumerable<UInt64> pointers)
+        {
+            DrawLinks(pointers.Select(p => GetThingAt(p)));
+        }
+
+        private void DrawLinks(IEnumerable<ThingInMemory> thingInMemories)
+        {
+            Color c = GUI.backgroundColor;
+            GUI.skin.button.alignment = TextAnchor.UpperLeft;
+            foreach (ThingInMemory rb in thingInMemories)
+            {
+                EditorGUI.BeginDisabledGroup(rb == _selectedThing || rb == null);
+
+                GUI.backgroundColor = ColorFor(rb);
+
+                string caption = rb == null ? "null" : rb.caption;
+
+                ManagedObject managedObject = rb as ManagedObject;
+                if (managedObject != null && managedObject.typeDescription.name == "System.String")
+                    caption = StringTools.ReadString(_unpackedCrawl.managedHeap.Find(managedObject.address, _unpackedCrawl.virtualMachineInformation), _unpackedCrawl.virtualMachineInformation);
+
+                if (GUILayout.Button(caption))
+                    _hostWindow.SelectThing(rb);
+                EditorGUI.EndDisabledGroup();
+            }
+            GUI.backgroundColor = c;
+        }
+
+        private Color ColorFor(ThingInMemory rb)
+        {
+            if (rb == null)
+                return Color.gray;
+            if (rb is NativeUnityEngineObject)
+                return Color.red;
+            if (rb is ManagedObject)
+                return Color.Lerp(Color.blue, Color.white, 0.5f);
+            if (rb is GCHandle)
+                return Color.magenta;
+            if (rb is StaticFields)
+                return Color.yellow;
+
+            throw new ArgumentException("Unexpected type: " + rb.GetType());
+        }
+    }
+}
+#endif
