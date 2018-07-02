@@ -1,16 +1,23 @@
 ﻿#if UNITY_EDITOR
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.PostProcessing;
 using UnityEngine.Rendering;
+using UnityEngine.UI;
 using UnityEditor;
 
 namespace NeonCubeStudio
 {
     public class GenerateScene : MonoBehaviour
     {
-        [MenuItem("Tools/Generate scene")]
-        public static void GenerateNewScene()
+        [MenuItem("Tools/Generate normal scene")]
+        public static void GenerateNormalScene()
         {
+            if (!EditorUtility.DisplayDialog("Generate normal scene", "Doing this will cause the current scene to be overwritten. Do you still wish to proceed?", "Yes", "No"))
+            {
+                return;
+            }
+
             // delete all old objects
             GameObject[] GameObjects = (FindObjectsOfType<GameObject>() as GameObject[]);
 
@@ -140,6 +147,19 @@ namespace NeonCubeStudio
             _probesStaticReflection.transform.parent = _probesStatic.transform;
 #endregion
 
+#region GUI
+            GameObject _canvas = new GameObject("Canvas");
+            _canvas.transform.parent = _GUI.transform;
+            Canvas _canvasCanvas = _canvas.AddComponent<Canvas>();
+            _canvasCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            CanvasScaler _canvasScaler = _canvas.AddComponent<CanvasScaler>();
+            _canvasScaler.uiScaleMode = UnityEngine.UI.CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            _canvasScaler.referenceResolution = new Vector2(1920, 1080);
+            _canvas.AddComponent<GraphicRaycaster>();
+            _canvas.AddComponent<EventSystem>();
+            _canvas.AddComponent<StandaloneInputModule>();
+#endregion
+
 #region Scene settings
             RenderSettings.sun = _sunLight;
             RenderSettings.defaultReflectionResolution = 2048;
@@ -148,6 +168,114 @@ namespace NeonCubeStudio
             Lightmapping.ClearLightingDataAsset();
             Lightmapping.realtimeGI = true;
             Lightmapping.bakedGI = true;
+
+            LightmapEditorSettings.reflectionCubemapCompression = ReflectionCubemapCompression.Uncompressed;
+            LightmapEditorSettings.lightmapper = LightmapEditorSettings.Lightmapper.ProgressiveCPU;
+            LightmapEditorSettings.textureCompression = false;
+            LightmapEditorSettings.realtimeResolution = 8.0f;
+            LightmapEditorSettings.padding = 4;
+#if UNITY_2018_1_OR_NEWER
+            LightmapEditorSettings.maxAtlasSize = 2048;
+#else
+            LightmapEditorSettings.maxAtlasWidth = 2048;
+            LightmapEditorSettings.maxAtlasHeight = 2048;
+#endif
+            LightmapEditorSettings.sampling = LightmapEditorSettings.Sampling.Auto;
+            LightmapEditorSettings.enableAmbientOcclusion = true;
+            LightmapEditorSettings.aoExponentDirect = 1.0f;
+#endregion
+        }
+
+        [MenuItem("Tools/Generate gui scene")]
+        public static void GenerateGUIlScene()
+        {
+            if (!EditorUtility.DisplayDialog("Generate gui scene", "Doing this will cause the current scene to be overwritten. Do you still wish to proceed?", "Yes", "No"))
+            {
+                return;
+            }
+
+            // delete all old objects
+            GameObject[] GameObjects = (FindObjectsOfType<GameObject>() as GameObject[]);
+
+            for (int i = 0; i < GameObjects.Length; i++)
+            {
+                DestroyImmediate(GameObjects[i]);
+            }
+
+            // root
+            GameObject _root = new GameObject("Root");
+
+            // dynamic
+            GameObject _dynamic = new GameObject("Dynamic");
+            _dynamic.transform.parent = _root.transform;
+
+            // GUI
+            GameObject _GUI = new GameObject("GUI");
+            _GUI.transform.parent = _root.transform;
+
+#region dynamic
+            // objects
+            GameObject _objectsDynamic = new GameObject("Objects");
+            _objectsDynamic.transform.parent = _dynamic.transform;
+
+            // camera
+            GameObject _objectsDynamicCameraPivot = new GameObject("Camera pivot");
+            _objectsDynamicCameraPivot.transform.parent = _objectsDynamic.transform;
+            _objectsDynamicCameraPivot.transform.position = new Vector3(0, 0, 0);
+
+            GameObject _objectsDynamicCameraMain = new GameObject("Main Camera");
+            _objectsDynamicCameraMain.transform.parent = _objectsDynamicCameraPivot.transform;
+            _objectsDynamicCameraMain.transform.position = _objectsDynamicCameraPivot.transform.position;
+            _objectsDynamicCameraMain.tag = "MainCamera";
+            _objectsDynamicCameraMain.AddComponent<AudioListener>();
+            Camera _mainCamera = _objectsDynamicCameraMain.AddComponent<Camera>();
+            _mainCamera.backgroundColor = new Color(0.0f, 0.0f, 0.0f, 1.0f);
+            _mainCamera.farClipPlane = 1.0f;
+            _mainCamera.allowMSAA = false;
+
+            // Audio
+            GameObject _audioDynamic = new GameObject("Audio");
+            _audioDynamic.transform.parent = _dynamic.transform;
+
+            // Audio types
+            GameObject _audioDynamicAmbient = new GameObject("Ambient");
+            _audioDynamicAmbient.transform.parent = _audioDynamic.transform;
+
+            GameObject _audioDynamicMusic = new GameObject("Music");
+            _audioDynamicMusic.transform.parent = _audioDynamic.transform;
+#endregion
+
+#region GUI
+            // canvas
+            GameObject _canvas = new GameObject("Canvas");
+            _canvas.transform.parent = _GUI.transform;
+            Canvas _canvasCanvas = _canvas.AddComponent<Canvas>();
+            _canvasCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            CanvasScaler _canvasScaler = _canvas.AddComponent<CanvasScaler>();
+            _canvasScaler.uiScaleMode = UnityEngine.UI.CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            _canvasScaler.referenceResolution = new Vector2(1920, 1080);
+            _canvas.AddComponent<GraphicRaycaster>();
+            _canvas.AddComponent<EventSystem>();
+            _canvas.AddComponent<StandaloneInputModule>();
+
+            // background
+            GameObject _backgound = new GameObject("Background");
+            _backgound.transform.parent = _canvas.transform;
+            RectTransform _backgroundTransform = _backgound.AddComponent<RectTransform>();
+            _backgroundTransform.anchoredPosition = new Vector2(0, 0);
+            _backgroundTransform.sizeDelta = new Vector2(1920, 1080);
+            Image _backgoundImage = _backgound.AddComponent<Image>();
+            _backgoundImage.sprite = (Sprite)AssetDatabase.LoadAssetAtPath("Assets/Sprites/White_32.png", typeof(Sprite));
+            _backgoundImage.raycastTarget = false;
+#endregion
+
+#region Scene settings
+            RenderSettings.defaultReflectionResolution = 16;
+
+            Lightmapping.giWorkflowMode = Lightmapping.GIWorkflowMode.OnDemand;
+            Lightmapping.ClearLightingDataAsset();
+            Lightmapping.realtimeGI = false;
+            Lightmapping.bakedGI = false;
 
             LightmapEditorSettings.reflectionCubemapCompression = ReflectionCubemapCompression.Uncompressed;
             LightmapEditorSettings.lightmapper = LightmapEditorSettings.Lightmapper.ProgressiveCPU;
