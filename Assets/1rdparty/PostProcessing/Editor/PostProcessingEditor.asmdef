@@ -1,0 +1,10 @@
+{
+    "name": "PostProcessingEditor",
+    "references": [
+        "PostProcessing"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": []
+}

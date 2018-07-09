@@ -266,6 +266,7 @@ namespace NeonCubeStudio
             _backgroundTransform.sizeDelta = new Vector2(1920, 1080);
             Image _backgoundImage = _backgound.AddComponent<Image>();
             _backgoundImage.sprite = (Sprite)AssetDatabase.LoadAssetAtPath("Assets/Sprites/White_32.png", typeof(Sprite));
+            _backgoundImage.color = new Color(0.0f, 0.0f, 0.0f, 1.0f);
             _backgoundImage.raycastTarget = false;
 #endregion
 

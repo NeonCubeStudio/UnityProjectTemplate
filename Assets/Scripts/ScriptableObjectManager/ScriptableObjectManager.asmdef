@@ -1,0 +1,8 @@
+{
+    "name": "ScriptableObjectManager",
+    "references": [],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": []
+}

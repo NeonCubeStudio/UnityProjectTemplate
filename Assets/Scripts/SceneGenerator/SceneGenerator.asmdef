@@ -1,0 +1,10 @@
+{
+    "name": "SceneGenerator",
+    "references": [
+        "PostProcessing"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": []
+}
